@@ -1,0 +1,64 @@
+pipeline {
+
+agent any
+
+stages {
+
+    stage('Checkout from GitHub') {
+        steps {
+            git branch: 'feature',
+                url: 'https://github.com/KandlaguntaVenkataSivaNiranjanReddy/spring-boot-mongo-docker-kkfunda.git'
+        }
+    }
+
+    stage('Setup KubeConfig') {
+        steps {
+            withCredentials([
+                aws(
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    credentialsId: 'aws-eks-cred',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                sh '''
+                    aws eks update-kubeconfig --region ap-south-2 --name EKS-CLUSTER
+                '''
+            }
+        }
+    }
+
+    stage('Deploy to Kubernetes') {
+    steps {
+        withCredentials([
+            aws(
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                credentialsId: 'aws-eks-cred',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+            )
+        ]) {
+            sh '''
+                kubectl apply -f springappmongo.yaml --validate=false
+            '''
+          }
+        }
+    }
+
+    stage('Verify Pods and Services') {
+        steps {
+            withCredentials([
+                aws(
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    credentialsId: 'aws-eks-cred',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                sh '''
+                    kubectl get pods
+                    kubectl get svc
+                '''
+            }
+        }
+    }
+ }
+
+}
