@@ -1,120 +1,118 @@
 pipeline {
+
     agent any
 
     tools {
-        maven 'maven'
+        maven 'mvn_3.9.16' // This should match the Maven name in Jenkins Global Tool Configuration
     }
 
-    environment {
-        AWS_DEFAULT_REGION = 'ap-south-1'  // Set default AWS region
-    }
+    stages{
+    
+    stage('Checkout from GitHub') {
+        steps {
+            git branch: 'feature',
+                url: 'https://github.com/KandlaguntaVenkataSivaNiranjanReddy/spring-boot-mongo-docker-kkfunda.git'
+        }
+      }
 
-    stages {
-        // Checkout Code
-        stage('Checkout') {
+    stage('Build') {
             steps {
-                git branch: 'feature', 
-                    credentialsId: '33e5e605-33c2-45d2-8c7d-4a94a80eb1ef', 
-                    url: 'https://github.com/KandlaguntaVenkataSivaNiranjanReddy/spring-boot-mongo-docker-kkfunda.git'
+                sh 'mvn clean package'
             }
         }
 
-        // Build the Maven Project
-        stage('Build') {
+     stage('SonarQube') {
             steps {
-                sh "mvn clean package"
-            }
-        }
 
-        // File System Security Scan using Trivy
-        stage('File System Trivy Scan') {
-            steps {
-                script {
-                    def status = sh(script: "trivy fs --format table -o trivy-fs-report.html .", returnStatus: true)
-                    if (status != 0) {
-                        error "Trivy scan failed with exit code ${status}"
-                    } else {
-                        echo "Trivy scan completed successfully."
-                    }
-                }
-            }
-        }
+                withSonarQubeEnv('sonarQube') {
 
-        // Code Quality Analysis with SonarQube
-        stage('SonarQube') {
-            steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
+                    sh '''
                     mvn sonar:sonar \
-                        -Dsonar.projectKey=spring-boot-mongo \
-                        -Dsonar.projectName='Spring Boot Mongo Project' \
-                        -Dsonar.host.url=http://18.175.240.114:9000/
-                    """
+                    -Dsonar.projectKey=spring-boot-mongo \
+                    -Dsonar.projectName="Spring Boot Mongo Project"
+                    '''
+
                 }
             }
         }
-
-        // Build Docker Image and Tag
-        stage('Build & Tag Docker Image') {
+      
+      stage('Build Docker Image') {
             steps {
+
                 script {
-                    withDockerRegistry(credentialsId: '985fdb56-2bc9-4fc7-b69d-0c3dfddee456') {
-                        sh "docker build -t niranjanreddy1231/mongospring:latest ."
+
+                    withDockerRegistry(credentialsId: 'docker') {
+
+                        sh 'docker build -t satyamolleti4599/mongospring:1.0.0 .'
+
                     }
                 }
             }
         }
 
-        // Push Docker Image to Registry
-        stage('Push Docker Image') {
+      stage('Push Docker Image') {
             steps {
+
                 script {
-                    withDockerRegistry(credentialsId: '985fdb56-2bc9-4fc7-b69d-0c3dfddee456') {
-                        sh "docker push niranjanreddy1231/mongospring:latest"
+
+                    withDockerRegistry(credentialsId: 'docker') {
+
+                        sh 'docker push satyamolleti4599/mongospring:1.0.0'
+
                     }
                 }
             }
         }
 
-        // Configure AWS EKS Access
-        stage('Setup KubeConfig') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
-                                  credentialsId: 'aws-eks-cred']]) {
-                    script {
-                        sh """
-                        aws eks update-kubeconfig --region ap-south-1 --name EKS-Demo
-                        """
-                    }
-                }
-            }
-        }
-
-        // Deploy to Kubernetes Cluster
-        stage('Deploy to Kubernetes') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
-                                  credentialsId: 'aws-eks-cred']]) {
-                    script {
-                        sh """
-                        export KUBECONFIG=/var/lib/jenkins/.kube/config
-                        kubectl apply -f springappmongo.yaml -n test-ns --validate=false
-                        """
-                    }
-                }
-            }
-        }
-
-        // Verify Deployed Pods
-        stage('Verify Pods') {
-            steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
-                                  credentialsId: 'aws-eks-cred']]) {
-                    script {
-                        sh "kubectl get pods -n test-ns"
-                    }
-                }
+      stage('Setup KubeConfig') {
+        steps {
+            withCredentials([
+                aws(
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    credentialsId: 'aws-eks-cred',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                sh '''
+                    aws eks update-kubeconfig --region ap-south-2 --name EKS-CLUSTER
+                '''
             }
         }
     }
+
+    stage('Deploy to Kubernetes') {
+    steps {
+        withCredentials([
+            aws(
+                accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                credentialsId: 'aws-eks-cred',
+                secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+            )
+        ]) {
+            sh '''
+                kubectl apply -f springappmongo.yaml --validate=false
+            '''
+          }
+        }
+    }
+
+    stage('Verify Pods and Services') {
+        steps {
+            withCredentials([
+                aws(
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    credentialsId: 'aws-eks-cred',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                sh '''
+                    kubectl get pods
+                    kubectl get svc
+                '''
+            }
+        }
+    }
+     
+    }
+
 }
